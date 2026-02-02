@@ -170,4 +170,51 @@ describe("generateSpecMarkdown", () => {
     // Should still have valid structure
     expect(md).toContain("## 1. 概要");
   });
+
+  it("should escape pipe characters in values", () => {
+    const analysis = {
+      flowDisplayName: "Flow with | pipe",
+      connectors: [
+        { connectorId: "conn|1", displayName: "Name|With|Pipes", apiName: "api" },
+      ],
+      triggers: [],
+      actions: [],
+      questions: [],
+    };
+    const md = generateSpecMarkdown(analysis, DEFAULT_META);
+
+    // Pipes inside table cells must be escaped
+    expect(md).toContain("conn\\|1");
+    expect(md).toContain("Name\\|With\\|Pipes");
+    // Table structure should remain valid
+    const tableLines = md.split("\n").filter((l) => l.startsWith("|"));
+    for (const line of tableLines) {
+      expect(line.trim()).toMatch(/^\|.*\|$/);
+    }
+  });
+
+  it("should replace newlines in values to keep table rows single-line", () => {
+    const analysis = {
+      flowDisplayName: "Flow\nwith\nnewlines",
+      connectors: [],
+      triggers: [],
+      actions: [],
+      questions: [
+        {
+          category: "general" as const,
+          target: "target",
+          question: "Line1\nLine2\r\nLine3",
+          reason: "reason",
+        },
+      ],
+    };
+    const md = generateSpecMarkdown(analysis, DEFAULT_META);
+
+    // No raw newlines inside table rows
+    const tableLines = md.split("\n").filter((l) => l.startsWith("|"));
+    for (const line of tableLines) {
+      expect(line).not.toMatch(/\n/);
+    }
+    expect(md).toContain("Line1 Line2 Line3");
+  });
 });

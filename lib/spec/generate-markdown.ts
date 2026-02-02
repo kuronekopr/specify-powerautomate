@@ -3,10 +3,15 @@ import type { FlowAnalysisResult, TriggerInfo, ActionInfo, ConnectorInfo, Questi
 /**
  * Blank-safe helper: always returns a string, never undefined/null.
  * If value is falsy or only whitespace, returns the fallback (default "―").
+ * Pipe characters are escaped to prevent markdown table breakage.
+ * Newlines are replaced with spaces to keep rows on a single line.
  */
 function safe(value: string | null | undefined, fallback = "―"): string {
   if (!value || value.trim() === "") return fallback;
-  return value.trim();
+  return value
+    .trim()
+    .replace(/\|/g, "\\|")
+    .replace(/\r?\n/g, " ");
 }
 
 /**
