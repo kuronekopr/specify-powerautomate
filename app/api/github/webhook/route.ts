@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import crypto from "node:crypto";
 import { inngest } from "@/inngest/client";
+import { logEvent } from "@/lib/logging";
 
 export async function POST(req: Request) {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -33,6 +34,13 @@ export async function POST(req: Request) {
   const event = req.headers.get("x-github-event");
   const payload = JSON.parse(body);
 
+  await logEvent({
+    source: "webhook:github",
+    eventType: "webhook.received",
+    message: `GitHub webhook received: ${event}/${payload.action}`,
+    metadata: { event, action: payload.action, repo: payload.repository?.full_name },
+  });
+
   // ── Issue closed → app/issue.closed ───────────────────────
   if (event === "issues" && payload.action === "closed") {
     await inngest.send({
@@ -42,6 +50,14 @@ export async function POST(req: Request) {
         repo: payload.repository.full_name,
       },
     });
+
+    await logEvent({
+      source: "webhook:github",
+      eventType: "webhook.issue.closed",
+      message: `Issue #${payload.issue.number} closed on ${payload.repository.full_name}`,
+      metadata: { issueNumber: payload.issue.number, repo: payload.repository.full_name },
+    });
+
     return NextResponse.json({ ok: true, event: "issue.closed" });
   }
 
@@ -58,9 +74,24 @@ export async function POST(req: Request) {
         repo: payload.repository.full_name,
       },
     });
+
+    await logEvent({
+      source: "webhook:github",
+      eventType: "webhook.pr.merged",
+      message: `PR #${payload.pull_request.number} merged on ${payload.repository.full_name}`,
+      metadata: { prNumber: payload.pull_request.number, repo: payload.repository.full_name },
+    });
+
     return NextResponse.json({ ok: true, event: "pr.merged" });
   }
 
   // ── Unhandled event — acknowledge silently ────────────────
+  await logEvent({
+    source: "webhook:github",
+    eventType: "webhook.ignored",
+    message: `Ignored webhook event: ${event}/${payload.action}`,
+    metadata: { event, action: payload.action },
+  });
+
   return NextResponse.json({ ok: true, event: "ignored" });
 }

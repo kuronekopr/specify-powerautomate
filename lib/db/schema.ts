@@ -6,6 +6,7 @@ import {
   timestamp,
   integer,
   boolean,
+  jsonb,
   primaryKey,
 } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
@@ -114,4 +115,15 @@ export const skillDefinitions = pgTable("skill_definitions", {
   failureImpact: text("failure_impact"),
   notes: text("notes"),
   updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow(),
+});
+
+export const eventLogs = pgTable("event_logs", {
+  id: uuid("id").defaultRandom().primaryKey(),
+  uploadId: uuid("upload_id").references(() => uploads.id),
+  source: varchar("source", { length: 100 }).notNull(),
+  eventType: varchar("event_type", { length: 100 }).notNull(),
+  level: varchar("level", { length: 10 }).notNull().default("info"),
+  message: text("message").notNull(),
+  metadata: jsonb("metadata"),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
