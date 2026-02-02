@@ -21,6 +21,11 @@ import {
   createPullRequest,
   getPullRequest,
 } from "@/lib/github/client";
+import {
+  sendQuestionRequestEmail,
+  sendApprovalRequestEmail,
+  sendCompletionEmail,
+} from "@/lib/email/send";
 
 /**
  * Main workflow: triggered when a new upload is created.
@@ -196,6 +201,16 @@ export const analyzeUpload = inngest.createFunction(
       };
     });
 
+    // ── Email: 質問依頼 ────────────────────────────────────────
+    await step.run("notify-question-request", async () => {
+      await sendQuestionRequestEmail({
+        to: setupResult.userEmail,
+        packageName: setupResult.packageName,
+        issueUrl: issueResult.issueUrl,
+        questionCount: analysisResult.totalQuestions,
+      });
+    });
+
     // ── Wait for Issue Close ─────────────────────────────────
     await step.waitForEvent("wait-for-issue-close", {
       event: "app/issue.closed",
@@ -329,6 +344,16 @@ export const analyzeUpload = inngest.createFunction(
       };
     });
 
+    // ── Email: 承認依頼 ────────────────────────────────────────
+    await step.run("notify-approval-request", async () => {
+      await sendApprovalRequestEmail({
+        to: setupResult.userEmail,
+        packageName: setupResult.packageName,
+        prUrl: prResult.prUrl,
+        version: specResult.versionNumber,
+      });
+    });
+
     // ── Wait for PR Merge ────────────────────────────────────
     await step.waitForEvent("wait-for-pr-merge", {
       event: "app/pr.merged",
@@ -368,6 +393,17 @@ export const analyzeUpload = inngest.createFunction(
         .update(uploads)
         .set({ status: "completed" })
         .where(eq(uploads.id, uploadId));
+    });
+
+    // ── Email: 完了通知 ──────────────────────────────────────
+    await step.run("notify-completion", async () => {
+      const repoUrl = `https://github.com/${issueResult.repoFullName}`;
+      await sendCompletionEmail({
+        to: setupResult.userEmail,
+        packageName: setupResult.packageName,
+        version: specResult.versionNumber,
+        repoUrl,
+      });
     });
 
     return {
