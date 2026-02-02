@@ -4,6 +4,12 @@ import path from "path";
 
 // ── Mocks ────────────────────────────────────────────────────────
 
+// Mock logging
+vi.mock("@/lib/logging", () => ({
+  logEvent: vi.fn().mockResolvedValue(undefined),
+  logError: vi.fn().mockResolvedValue(undefined),
+}));
+
 // Mock DB
 const mockDbSelect = vi.fn();
 const mockDbInsert = vi.fn();

@@ -5,6 +5,11 @@ vi.mock("@/inngest/client", () => ({
   inngest: { send: vi.fn().mockResolvedValue(undefined) },
 }));
 
+vi.mock("@/lib/logging", () => ({
+  logEvent: vi.fn().mockResolvedValue(undefined),
+  logError: vi.fn().mockResolvedValue(undefined),
+}));
+
 import { POST } from "@/app/api/github/webhook/route";
 import { inngest } from "@/inngest/client";
 

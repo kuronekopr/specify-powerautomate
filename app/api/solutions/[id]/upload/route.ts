@@ -5,6 +5,7 @@ import { getDb } from "@/lib/db";
 import { solutions, uploads } from "@/lib/db/schema";
 import { eq, and } from "drizzle-orm";
 import { inngest } from "@/inngest/client";
+import { logEvent } from "@/lib/logging";
 
 /**
  * Client-upload flow for large ZIP files.
@@ -82,6 +83,14 @@ export async function POST(
           status: "pending",
         })
         .returning();
+
+      await logEvent({
+        uploadId: upload.id,
+        source: "api:upload",
+        eventType: "upload.created",
+        message: `Upload created for solution ${sid}`,
+        metadata: { solutionId: sid, fileUrl: blob.url },
+      });
 
       // Fire Inngest event
       await inngest.send({
