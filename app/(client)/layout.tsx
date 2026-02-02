@@ -24,6 +24,20 @@ export default async function ClientLayout({
             >
               Specify
             </Link>
+            <nav className="flex items-center gap-4">
+              <Link
+                href="/client/dashboard"
+                className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+              >
+                ダッシュボード
+              </Link>
+              <Link
+                href="/client/solutions/new"
+                className="text-sm text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+              >
+                新規ソリューション
+              </Link>
+            </nav>
           </div>
           <div className="flex items-center gap-4">
             <span className="text-sm text-zinc-500">{session.user.email}</span>
