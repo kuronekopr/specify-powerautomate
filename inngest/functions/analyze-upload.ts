@@ -339,7 +339,7 @@ export const analyzeUpload = inngest.createFunction(
 
     await step.waitForEvent("wait-for-issue-close", {
       event: "app/issue.closed",
-      match: "data.issueNumber",
+      if: `async.data.issueNumber == ${issueResult.issueNumber}`,
       timeout: "30d",
     });
 
@@ -579,7 +579,7 @@ export const analyzeUpload = inngest.createFunction(
 
     await step.waitForEvent("wait-for-pr-merge", {
       event: "app/pr.merged",
-      match: "data.prNumber",
+      if: `async.data.prNumber == ${prResult.prNumber}`,
       timeout: "30d",
     });
 
