@@ -41,26 +41,6 @@ export async function POST(req: Request) {
     metadata: { event, action: payload.action, repo: payload.repository?.full_name },
   });
 
-  // ── Issue closed → app/issue.closed ───────────────────────
-  if (event === "issues" && payload.action === "closed") {
-    await inngest.send({
-      name: "app/issue.closed",
-      data: {
-        issueNumber: payload.issue.number,
-        repo: payload.repository.full_name,
-      },
-    });
-
-    await logEvent({
-      source: "webhook:github",
-      eventType: "webhook.issue.closed",
-      message: `Issue #${payload.issue.number} closed on ${payload.repository.full_name}`,
-      metadata: { issueNumber: payload.issue.number, repo: payload.repository.full_name },
-    });
-
-    return NextResponse.json({ ok: true, event: "issue.closed" });
-  }
-
   // ── PR merged → app/pr.merged ─────────────────────────────
   if (
     event === "pull_request" &&

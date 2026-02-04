@@ -54,7 +54,7 @@ describe("POST /api/github/webhook", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-github-event": "issues",
+        "x-github-event": "pull_request",
       },
       body,
     });
@@ -64,30 +64,12 @@ describe("POST /api/github/webhook", () => {
 
   it("should return 401 when signature is invalid", async () => {
     const req = createRequest(
-      "issues",
-      { action: "closed", issue: { number: 1 }, repository: { full_name: "o/r" } },
+      "pull_request",
+      { action: "closed", pull_request: { number: 1, merged: true }, repository: { full_name: "o/r" } },
       { signature: "sha256=invalid" },
     );
     const res = await POST(req);
     expect(res.status).toBe(401);
-  });
-
-  it("should send app/issue.closed event when issue is closed", async () => {
-    const payload = {
-      action: "closed",
-      issue: { number: 42 },
-      repository: { full_name: "owner/repo" },
-    };
-    const req = createRequest("issues", payload);
-    const res = await POST(req);
-
-    expect(res.status).toBe(200);
-    const json = await res.json();
-    expect(json.event).toBe("issue.closed");
-    expect(mockSend).toHaveBeenCalledWith({
-      name: "app/issue.closed",
-      data: { issueNumber: 42, repo: "owner/repo" },
-    });
   });
 
   it("should send app/pr.merged event when PR is merged", async () => {
@@ -134,6 +116,21 @@ describe("POST /api/github/webhook", () => {
     expect(mockSend).not.toHaveBeenCalled();
   });
 
+  it("should ignore issues events (not supported)", async () => {
+    const payload = {
+      action: "closed",
+      issue: { number: 42 },
+      repository: { full_name: "owner/repo" },
+    };
+    const req = createRequest("issues", payload);
+    const res = await POST(req);
+
+    expect(res.status).toBe(200);
+    const json = await res.json();
+    expect(json.event).toBe("ignored");
+    expect(mockSend).not.toHaveBeenCalled();
+  });
+
   it("should return 500 when secret is not configured", async () => {
     delete process.env.GITHUB_WEBHOOK_SECRET;
     const body = JSON.stringify({ action: "closed" });
@@ -141,7 +138,7 @@ describe("POST /api/github/webhook", () => {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-github-event": "issues",
+        "x-github-event": "pull_request",
         "x-hub-signature-256": "sha256=abc",
       },
       body,

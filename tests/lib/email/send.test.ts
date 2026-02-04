@@ -20,7 +20,6 @@ vi.mock("@/lib/email/send", async () => {
 });
 
 import {
-  sendQuestionRequestEmail,
   sendApprovalRequestEmail,
   sendCompletionEmail,
 } from "@/lib/email/send";
@@ -29,57 +28,6 @@ describe("Email notifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockSend.mockResolvedValue({ data: { id: "email-123" }, error: null });
-  });
-
-  describe("sendQuestionRequestEmail", () => {
-    it("should send question request email with correct params", async () => {
-      const result = await sendQuestionRequestEmail({
-        to: "client@example.com",
-        packageName: "TestFlow",
-        issueUrl: "https://github.com/owner/repo/issues/1",
-        questionCount: 3,
-      });
-
-      expect(result.id).toBe("email-123");
-      expect(mockSend).toHaveBeenCalledTimes(1);
-
-      const call = mockSend.mock.calls[0][0];
-      expect(call.to).toBe("client@example.com");
-      expect(call.subject).toContain("確認依頼");
-      expect(call.subject).toContain("TestFlow");
-      expect(call.html).toContain("TestFlow");
-      expect(call.html).toContain("3 件");
-      expect(call.html).toContain("https://github.com/owner/repo/issues/1");
-    });
-
-    it("should escape HTML in package name", async () => {
-      await sendQuestionRequestEmail({
-        to: "client@example.com",
-        packageName: '<script>alert("xss")</script>',
-        issueUrl: "https://example.com",
-        questionCount: 1,
-      });
-
-      const html = mockSend.mock.calls[0][0].html;
-      expect(html).not.toContain("<script>");
-      expect(html).toContain("&lt;script&gt;");
-    });
-
-    it("should throw on Resend error", async () => {
-      mockSend.mockResolvedValueOnce({
-        data: null,
-        error: { message: "Invalid API key" },
-      });
-
-      await expect(
-        sendQuestionRequestEmail({
-          to: "x@example.com",
-          packageName: "Test",
-          issueUrl: "url",
-          questionCount: 0,
-        })
-      ).rejects.toThrow("Email send failed: Invalid API key");
-    });
   });
 
   describe("sendApprovalRequestEmail", () => {
@@ -156,12 +104,6 @@ describe("Email notifications", () => {
 
   describe("HTML template structure", () => {
     it("should produce valid HTML in all templates", async () => {
-      await sendQuestionRequestEmail({
-        to: "a@b.com",
-        packageName: "P",
-        issueUrl: "u",
-        questionCount: 0,
-      });
       await sendApprovalRequestEmail({
         to: "a@b.com",
         packageName: "P",
