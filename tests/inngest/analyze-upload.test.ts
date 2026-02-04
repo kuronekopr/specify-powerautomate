@@ -32,18 +32,6 @@ vi.mock("@/lib/github/client", () => ({
     html_url: "https://github.com/owner/test-repo",
     default_branch: "main",
   }),
-  createIssue: vi.fn().mockResolvedValue({
-    number: 1,
-    html_url: "https://github.com/owner/test-repo/issues/1",
-    state: "open",
-  }),
-  getIssue: vi.fn().mockResolvedValue({
-    number: 1,
-    state: "closed",
-  }),
-  getIssueComments: vi.fn().mockResolvedValue([
-    { body: "回答内容", user: { login: "client-user" } },
-  ]),
   createBranch: vi.fn().mockResolvedValue({
     ref: "refs/heads/spec/v1",
     object: { sha: "abc" },
@@ -74,7 +62,6 @@ import { analyzePackage } from "@/lib/analysis/analyze-flow";
 import { generateSpecMarkdown } from "@/lib/spec/generate-markdown";
 import {
   getOrCreateRepo,
-  createIssue,
   commitFile,
   createPullRequest,
   createBranch,
@@ -110,31 +97,8 @@ describe("analyze-upload workflow (unit tests)", () => {
       expect(results[0].actions.length).toBeGreaterThan(0);
       expect(results[0].questions.length).toBeGreaterThan(0);
     });
-  });
 
-  describe("Step 3: Issue creation", () => {
-    it("should call GitHub API to create issue", async () => {
-      const result = await createIssue(
-        "token",
-        "owner",
-        "repo",
-        "Test Title",
-        "Test Body",
-        ["確認依頼"]
-      );
-
-      expect(createIssue).toHaveBeenCalledWith(
-        "token",
-        "owner",
-        "repo",
-        "Test Title",
-        "Test Body",
-        ["確認依頼"]
-      );
-      expect(result.number).toBe(1);
-    });
-
-    it("should ensure repo exists before creating issue", async () => {
+    it("should ensure repo exists during analysis", async () => {
       await getOrCreateRepo("token", "owner", "spec-repo");
       expect(getOrCreateRepo).toHaveBeenCalledWith(
         "token",
@@ -144,7 +108,7 @@ describe("analyze-upload workflow (unit tests)", () => {
     });
   });
 
-  describe("Step 4: Spec generation", () => {
+  describe("Step 3: Spec generation", () => {
     it("should generate consistent markdown from analysis", async () => {
       const buffer = readFileSync(ZIP_PATH);
       const parsed = await parseZip(buffer);
@@ -187,7 +151,7 @@ describe("analyze-upload workflow (unit tests)", () => {
     });
   });
 
-  describe("Step 5: PR creation", () => {
+  describe("Step 4: PR creation", () => {
     it("should create branch, commit file, and open PR", async () => {
       await createBranch("token", "owner", "repo", "spec/v1", "main");
       expect(createBranch).toHaveBeenCalled();
@@ -225,7 +189,7 @@ describe("analyze-upload workflow (unit tests)", () => {
       // Step 2: Analyze
       const [analysis] = analyzePackage(parsed, []);
 
-      // Step 4: Generate spec
+      // Step 3: Generate spec
       const md = generateSpecMarkdown(analysis, {
         solutionName: "E2E Test",
         packageName: parsed.manifest.details.displayName,

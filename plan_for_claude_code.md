@@ -1,4 +1,4 @@
-# 詳細実装計画書: Power Automate業務資産化プラットフォーム
+# 詳細実装計画書: Power Automate業務資産化プラットフォーム (Last Updated: 2026-02-05)
 
 ## 1. システム概要
 本システムは、顧客がアップロードしたPower Automateのエクスポートファイルを解析し、業務仕様書を自動生成・管理するWebプラットフォームである。
@@ -14,15 +14,19 @@
 
 | レイヤー | 技術 | 用途 |
 |---------|-----|------|
-| Frontend/Backend | Next.js (App Router) | UIとAPI |
+| Frontend/Backend | Next.js (最新安定版) | UIとAPI |
 | Platform | Vercel | ホスティング |
 | Database | Neon (PostgreSQL) | ユーザー・ソルーション・進捗管理 |
-| Object Storage | Vercel Blob | アップロードファイル保存 |
-| Auth | Auth.js (NextAuth) | 認証 |
+| ORM | Drizzle ORM | 型安全なDBアクセス |
+| Object Storage | Vercel Blob (クライアントアップロード) | アップロードファイル保存 |
+| Auth | Auth.js v5 (NextAuth v5 beta) — JWT戦略 + Credentials | 認証 |
+| Password Hash | bcryptjs (salt rounds: 10) | パスワードハッシュ化 |
 | Async Queue | Inngest | 長時間処理・ステップ実行 |
-| Version Control & Workflow | GitHub API | 仕様書管理、Issue（質問）、PR（承認） |
+| Version Control & Workflow | GitHub API | 仕様書管理、PR（承認・修正指摘） |
+| Diagram | Mermaid.js (Text Generation) | フロー図生成 |
 | Email | Resend | 通知メール送信 |
-| PDF出力 | @react-pdf/renderer または html-pdf-node (Edge対応版) | 仕様書PDF化 |
+| Testing | Vitest | ユニットテスト・統合テスト |
+| PDF出力 | @react-pdf/renderer または html-pdf-node (Edge対応版) | 仕様書PDF化（未実装） |
 
 ---
 
@@ -30,8 +34,8 @@
 
 | ロール | できること |
 |--------|-----------|
-| **Client (顧客)** | ログイン、ファイルアップロード、GitHub Issue（質問）への回答、PR承認、仕様書閲覧・DL |
-| **Admin (提供者)** | 顧客管理、ドラフトレビュー・編集、Issue作成、PR作成、スキル定義メンテナンス |
+| **Client (顧客)** | ログイン、ファイルアップロード、PRでの修正指摘・承認、仕様書閲覧・DL |
+| **Admin (提供者)** | 顧客管理、ドラフトレビュー・編集、PR作成、スキル定義メンテナンス |
 
 ---
 
@@ -65,10 +69,9 @@ CREATE TABLE uploads (
   solution_id UUID REFERENCES solutions(id),
   file_url TEXT, -- Blob URL
   status VARCHAR(50) DEFAULT 'pending',
-    -- 'pending' → 'analyzing' → 'questions_open' → 'drafting' 
+    -- 'pending' → 'analyzing' → 'drafting' 
     -- → 'pr_open' → 'approved' → 'completed' / 'failed'
-  github_issue_number INT, -- 質問用Issue番号
-  github_pr_number INT, -- 承認用PR番号
+  github_pr_number INT, -- 承認・指摘用PR番号
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
@@ -116,43 +119,42 @@ CREATE TABLE skill_definitions (
    ┌─────────────────────────────────────────┐
    │  Step 2: Analysis (Claude Works Engine) │
    │  - フロー構造解析                        │
+   │  - 概要項目の抽出 (Purpose, Trigger等)   │
+   │    ※確信度が低い場合は「<要確認>」とする │
+   │  - Mermaid図の生成                       │
+   │    ※巨大フロー対策: 全てを描画せず、     │
+   │      分岐・ループ・外部接続のみ可視化    │
    │  - スキル定義マッピング                  │
-   │  - 不明点・曖昧点の抽出                  │
+   │  - Webhook設定 (PRイベント)              │
    └─────────────────────────────────────────┘
          ↓
    ┌─────────────────────────────────────────┐
-   │  Step 3: Create GitHub Issue (質問)     │
-   │  - 設計意図確認用の質問リストをIssueに   │
-   │  - 顧客にメール通知 (Resend)             │
-   │  - ステータス: questions_open            │
-   └─────────────────────────────────────────┘
-         ↓
-   ┌─────────────────────────────────────────┐
-   │  ** 待機: Issue Close イベント **       │
-   │  waitForEvent("github.issue.closed")    │
-   └─────────────────────────────────────────┘
-         ↓ (顧客がIssueに回答し、管理者がClose)
-   ┌─────────────────────────────────────────┐
-   │  Step 4: Draft Generation (LLM)         │
-   │  - 回答を反映し、仕様書Markdownを生成    │
-   │  - 管理者がレビュー・編集                │
-   └─────────────────────────────────────────┘
-         ↓
-   ┌─────────────────────────────────────────┐
-   │  Step 5: Create GitHub PR (承認依頼)    │
+   │  Step 3: Generate Spec & Create PR      │
+   │  - 仕様書Markdownを生成                  │
+   │    内容:                                 │
+   │    1. 概要 (Metadata)                    │
+   │    2. 使用コネクタ一覧                   │
+   │    3. トリガー定義                       │
+   │    4. アクション定義                     │
+   │    5. 障害時の影響                       │
+   │    6. Mermaidフロー図 (主要構造のみ)     │
+   │    7. 変更履歴 (GitHub Diffへのリンク)   │
+   │    8. 詳細フロー定義                     │
    │  - 仕様書をブランチにコミット            │
    │  - PRを作成し、顧客をReviewerに追加      │
-   │  - 顧客にメール通知 (Resend)             │
+   │  - 顧客に通知 (Resend)                   │
+   │    「ドラフトをご確認ください。修正点は  │
+   │      PRコメントで返信してください」      │
    │  - ステータス: pr_open                   │
    └─────────────────────────────────────────┘
          ↓
    ┌─────────────────────────────────────────┐
-   │  ** 待機: PR Merge イベント **          │
+   │  ** 待機: PR Merge (無期限) **          │
    │  waitForEvent("github.pr.merged")       │
    └─────────────────────────────────────────┘
-         ↓ (顧客がPR Approve → 管理者がMerge)
+         ↓ (顧客が指摘→管理者が修正→Merge)
    ┌─────────────────────────────────────────┐
-   │  Step 6: Finalize                       │
+   │  Step 4: Finalize                       │
    │  - spec_versions に保存                  │
    │  - is_current = true に更新              │
    │  - 顧客に完了メール (Resend)             │
@@ -161,8 +163,9 @@ CREATE TABLE skill_definitions (
 ```
 
 ### GitHub Webhookの設定
-- リポジトリに対して `issues` と `pull_request` のWebhookを設定。
-- Vercel API (`/api/github/webhook`) で受け取り、Inngestイベントを発火。
+- リポジトリに対して `pull_request` のWebhookを設定。
+- Vercel API (`/api/github/webhook`) で受け取り、HMAC-SHA256署名検証後、Inngestイベントを発火。
+- 環境変数 `GITHUB_WEBHOOK_SECRET` でシークレットを管理。
 
 ---
 
@@ -184,7 +187,6 @@ CREATE TABLE skill_definitions (
 |------|------|
 | **ソルーション一覧** | 自分のソルーションを選択 |
 | **アップロード** | ZIPファイルをD&D、進捗表示 |
-| **質問回答 (Issue)** | GitHub Issueへのリンク、またはアプリ内で回答フォーム表示 |
 | **承認 (PR)** | GitHub PRへのリンク、またはアプリ内で差分プレビュー＆承認ボタン |
 | **仕様書ビューアー** | 最新版Markdown表示、履歴切り替え |
 | **ダウンロード** | PDF / Markdown ダウンロード |
@@ -207,7 +209,6 @@ CREATE TABLE skill_definitions (
 │   │   ├── dashboard/
 │   │   └── solution/[id]/
 │   │       ├── upload/
-│   │       ├── questions/       # Issue回答
 │   │       ├── approve/         # PR承認
 │   │       └── viewer/
 │   ├── api/
@@ -241,17 +242,17 @@ CREATE TABLE skill_definitions (
 ### Phase 2: コアエンジン (Analysis)
 1. Power Automate ZIP パーサー実装
 2. `skill_definitions` テーブルへの初期データ投入
-3. 構造解析 → スキルマッピング → 質問リスト生成 のパイプライン
+3. 構造解析 → メタデータ抽出 → Mermaid生成（主要構造） → ドラフト生成 のパイプライン
 
 ### Phase 3: ワークフロー (Inngest + GitHub)
 1. Inngest セットアップ
-2. Step 1-3 実装（アップロード → Issue作成）
+2. Step 1-3 実装（アップロード → ドラフト生成 → PR作成）
 3. GitHub Webhook → Inngest イベント連携
-4. Step 4-6 実装（ドラフト → PR → Finalize）
+4. Step 4 実装（Finalize）
 
 ### Phase 4: メール通知 (Resend)
 1. Resend SDK 設定
-2. 通知テンプレート作成（質問依頼、承認依頼、完了通知）
+2. 通知テンプレート作成（承認依頼、完了通知）
 
 ### Phase 5: UI実装
 1. 管理者ダッシュボード・ドラフトエディタ

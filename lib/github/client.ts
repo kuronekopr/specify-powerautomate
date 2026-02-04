@@ -235,7 +235,7 @@ export async function createRepoWebhook(
     body: JSON.stringify({
       name: "web",
       active: true,
-      events: ["issues", "pull_request"],
+      events: ["pull_request"],
       config: {
         url: webhookUrl,
         content_type: "json",

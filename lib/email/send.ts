@@ -16,51 +16,6 @@ export interface SendEmailResult {
   id: string;
 }
 
-// ── 1. 質問依頼メール (Issue 作成時) ────────────────────────────
-
-export async function sendQuestionRequestEmail(params: {
-  to: string;
-  packageName: string;
-  issueUrl: string;
-  questionCount: number;
-}): Promise<SendEmailResult> {
-  const resend = getResend();
-
-  const { data, error } = await resend.emails.send({
-    from: FROM_ADDRESS,
-    to: params.to,
-    subject: `[確認依頼] ${params.packageName} の設計確認事項`,
-    html: buildQuestionRequestHtml(params),
-  });
-
-  if (error) throw new Error(`Email send failed: ${error.message}`);
-  return { id: data!.id };
-}
-
-function buildQuestionRequestHtml(params: {
-  packageName: string;
-  issueUrl: string;
-  questionCount: number;
-}): string {
-  return `
-<div style="font-family: sans-serif; max-width: 600px; margin: 0 auto;">
-  <h2>設計確認のお願い</h2>
-  <p>お疲れ様です。</p>
-  <p>アップロードいただいた Power Automate フロー <strong>${escape(params.packageName)}</strong> の分析が完了しました。</p>
-  <p>設計意図の確認が必要な事項が <strong>${params.questionCount} 件</strong> あります。</p>
-  <p>以下の GitHub Issue にて回答をお願いいたします。</p>
-  <p style="margin: 24px 0;">
-    <a href="${escape(params.issueUrl)}"
-       style="background: #0969da; color: #fff; padding: 12px 24px; border-radius: 6px; text-decoration: none;">
-      Issue を確認する
-    </a>
-  </p>
-  <p style="color: #666; font-size: 14px;">回答完了後、Issue を Close してください。自動的に仕様書ドラフトの生成が開始されます。</p>
-</div>`.trim();
-}
-
-// ── 2. 承認依頼メール (PR 作成時) ────────────────────────────────
-
 export async function sendApprovalRequestEmail(params: {
   to: string;
   packageName: string;
@@ -100,8 +55,6 @@ function buildApprovalRequestHtml(params: {
   <p style="color: #666; font-size: 14px;">マージ後、仕様書が正式版として登録されます。</p>
 </div>`.trim();
 }
-
-// ── 3. 完了通知メール (Finalize 時) ──────────────────────────────
 
 export async function sendCompletionEmail(params: {
   to: string;

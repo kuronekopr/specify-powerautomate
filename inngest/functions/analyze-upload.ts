@@ -13,18 +13,13 @@ import { analyzePackage } from "@/lib/analysis/analyze-flow";
 import { generateSpecMarkdown } from "@/lib/spec/generate-markdown";
 import {
   getOrCreateRepo,
-  createIssue,
-  getIssue,
-  getIssueComments,
   createBranch,
   commitFile,
   createPullRequest,
-  getPullRequest,
   listRepoWebhooks,
   createRepoWebhook,
 } from "@/lib/github/client";
 import {
-  sendQuestionRequestEmail,
   sendApprovalRequestEmail,
   sendCompletionEmail,
 } from "@/lib/email/send";
@@ -35,11 +30,10 @@ import { logEvent, logError } from "@/lib/logging";
  *
  * Steps:
  *   1. setup        – fetch upload/solution/user, download ZIP, parse
- *   2. analyze      – run analysis engine, generate questions
- *   3. create-issue – post questions as GitHub Issue
- *   4. generate-spec – generate markdown specification
- *   5. create-pr    – commit spec to branch, open PR
- *   6. finalize     – save spec_version, mark upload complete
+ *   2. analyze      – run analysis engine, ensure GitHub repo & webhook
+ *   3. generate-spec – generate markdown specification
+ *   4. create-pr    – commit spec to branch, open PR
+ *   5. finalize     – save spec_version, mark upload complete
  */
 export const analyzeUpload = inngest.createFunction(
   {
@@ -144,7 +138,7 @@ export const analyzeUpload = inngest.createFunction(
       }
     });
 
-    // ── Step 2: Analyze ──────────────────────────────────────
+    // ── Step 2: Analyze & GitHub Setup ───────────────────────
     const analysisResult = await step.run("analyze", async () => {
       await logEvent({
         uploadId,
@@ -168,43 +162,7 @@ export const analyzeUpload = inngest.createFunction(
 
         const results = analyzePackage(parsed, skillRows);
 
-        const result = {
-          analysisJson: JSON.stringify(results),
-          totalQuestions: results.reduce((sum, r) => sum + r.questions.length, 0),
-        };
-
-        await logEvent({
-          uploadId,
-          source: "inngest:analyze",
-          eventType: "step.analyze.success",
-          message: `Analysis completed: ${result.totalQuestions} questions generated`,
-          metadata: { totalQuestions: result.totalQuestions },
-        });
-
-        return result;
-      } catch (err) {
-        await logError({
-          uploadId,
-          source: "inngest:analyze",
-          eventType: "step.analyze.error",
-          message: "Analyze step failed",
-          error: err,
-        });
-        throw err;
-      }
-    });
-
-    // ── Step 3: Create GitHub Issue ──────────────────────────
-    const issueResult = await step.run("create-issue", async () => {
-      await logEvent({
-        uploadId,
-        source: "inngest:create-issue",
-        eventType: "step.create-issue.started",
-        message: "Create issue step started",
-      });
-
-      try {
-        const db = getDb();
+        // ── GitHub Setup ──
         const ghToken = process.env.GITHUB_TOKEN;
         if (!ghToken) throw new Error("GITHUB_TOKEN not configured");
         const ghOwner = process.env.GITHUB_OWNER;
@@ -225,201 +183,89 @@ export const analyzeUpload = inngest.createFunction(
             .where(eq(solutions.id, setupResult.solutionId));
         }
 
-        // ── Ensure Webhook Exists ──
+        // Ensure Webhook Exists
         const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
         if (!webhookSecret) {
           await logEvent({
             uploadId,
-            source: "inngest:create-issue",
+            source: "inngest:analyze",
             eventType: "webhook.config.missing",
-            level: "warn",
-            message: "GITHUB_WEBHOOK_SECRET not set, skipping webhook creation. Automatic workflow resumption will not work.",
+            message: "GITHUB_WEBHOOK_SECRET not set, skipping webhook creation.",
           });
         } else {
-          // Determine Base URL
-          // VERCEL_PROJECT_PRODUCTION_URL is the reliable production domain on Vercel
-          // NEXT_PUBLIC_APP_URL is often used for custom domains
-          let baseUrl = process.env.NEXT_PUBLIC_APP_URL ||
-            (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null);
+           // Determine Base URL
+           // VERCEL_PROJECT_PRODUCTION_URL is the reliable production domain on Vercel
+           // NEXT_PUBLIC_APP_URL is often used for custom domains
+           let baseUrl = process.env.NEXT_PUBLIC_APP_URL ||
+             (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null);
 
-          if (!baseUrl && process.env.VERCEL_URL) {
-            baseUrl = `https://${process.env.VERCEL_URL}`;
-          }
+           if (!baseUrl && process.env.VERCEL_URL) {
+             baseUrl = `https://${process.env.VERCEL_URL}`;
+           }
 
-          if (!baseUrl) {
-            await logEvent({
-              uploadId,
-              source: "inngest:create-issue",
-              eventType: "webhook.url.missing",
-              level: "warn",
-              message: "Could not determine Base URL for Webhook. Set NEXT_PUBLIC_APP_URL.",
-            });
-          } else {
-            const webhookUrl = `${baseUrl}/api/github/webhook`;
-            try {
-              const hooks = await listRepoWebhooks(ghToken, ghOwner, repoName);
-              const exists = hooks.some(h => h.config.url === webhookUrl);
+           if (!baseUrl) {
+             await logEvent({
+               uploadId,
+               source: "inngest:analyze",
+               eventType: "webhook.url.missing",
+               message: "Could not determine Base URL for Webhook.",
+             });
+           } else {
+             const webhookUrl = `${baseUrl}/api/github/webhook`;
+             try {
+               const hooks = await listRepoWebhooks(ghToken, ghOwner, repoName);
+               const exists = hooks.some(h => h.config.url === webhookUrl);
 
-              if (!exists) {
-                await createRepoWebhook(ghToken, ghOwner, repoName, webhookUrl, webhookSecret);
-                await logEvent({
-                  uploadId,
-                  source: "inngest:create-issue",
-                  eventType: "webhook.created",
-                  message: `Created webhook for ${repoName}: ${webhookUrl}`,
-                });
-              } else {
-                await logEvent({
-                  uploadId,
-                  source: "inngest:create-issue",
-                  eventType: "webhook.exists",
-                  message: `Webhook already exists for ${repoName}`,
-                });
-              }
-            } catch (err) {
-              await logError({
-                uploadId,
-                source: "inngest:create-issue",
-                eventType: "webhook.create.error",
-                message: "Failed to create/check webhook. Manual setup required.",
-                error: err,
-              });
-              // Do not throw here, as we want to proceed with Issue creation if possible,
-              // or at least not fail the whole step if just webhook fails (though workflow won't resume).
-              // Actually, if webhook fails, step 4 wont trigger automatically. But better to have the Issue created so user can see it.
-            }
-          }
+               if (!exists) {
+                 await createRepoWebhook(ghToken, ghOwner, repoName, webhookUrl, webhookSecret);
+                 await logEvent({
+                   uploadId,
+                   source: "inngest:analyze",
+                   eventType: "webhook.created",
+                   message: `Created webhook for ${repoName}: ${webhookUrl}`,
+                 });
+               }
+             } catch (err) {
+               // Log but don't fail, as analysis is successful
+                await logError({
+                 uploadId,
+                 source: "inngest:analyze",
+                 eventType: "webhook.create.error",
+                 message: "Failed to create/check webhook.",
+                 error: err,
+               });
+             }
+           }
         }
-
-        // Build issue body from questions
-        const analyses = JSON.parse(analysisResult.analysisJson);
-        let issueBody = `# 設計確認事項\n\n`;
-        issueBody += `**パッケージ名:** ${setupResult.packageName}\n`;
-        issueBody += `**フロー数:** ${setupResult.flowCount}\n\n`;
-
-        for (const analysis of analyses) {
-          issueBody += `## ${analysis.flowDisplayName}\n\n`;
-          if (analysis.questions.length === 0) {
-            issueBody += "確認事項はありません。\n\n";
-          } else {
-            for (let i = 0; i < analysis.questions.length; i++) {
-              const q = analysis.questions[i];
-              issueBody += `### Q${i + 1}. ${q.question}\n`;
-              issueBody += `- **カテゴリ:** ${q.category}\n`;
-              issueBody += `- **対象:** ${q.target}\n`;
-              issueBody += `- **理由:** ${q.reason}\n\n`;
-            }
-          }
-        }
-
-        issueBody += `\n---\n回答完了後、この Issue を Close してください。`;
-
-        const issue = await createIssue(
-          ghToken,
-          ghOwner,
-          repoName,
-          `[確認依頼] ${setupResult.packageName} 設計確認事項`,
-          issueBody,
-          ["確認依頼"]
-        );
-
-        // Save issue number
-        await db
-          .update(uploads)
-          .set({
-            status: "questions_open",
-            githubIssueNumber: issue.number,
-          })
-          .where(eq(uploads.id, uploadId));
 
         const result = {
-          issueNumber: issue.number,
-          issueUrl: issue.html_url,
-          repoFullName: repo.full_name,
+          analysisJson: JSON.stringify(results),
           repoName,
+          repoFullName: repo.full_name,
           defaultBranch: repo.default_branch,
         };
 
         await logEvent({
           uploadId,
-          source: "inngest:create-issue",
-          eventType: "step.create-issue.success",
-          message: `Issue #${issue.number} created`,
-          metadata: { issueNumber: issue.number, repoName },
+          source: "inngest:analyze",
+          eventType: "step.analyze.success",
+          message: `Analysis completed. Repo: ${repoName}`,
         });
 
         return result;
       } catch (err) {
         await logError({
           uploadId,
-          source: "inngest:create-issue",
-          eventType: "step.create-issue.error",
-          message: "Create issue step failed",
+          source: "inngest:analyze",
+          eventType: "step.analyze.error",
+          message: "Analyze step failed",
           error: err,
         });
         throw err;
       }
     });
 
-    // ── Email: 質問依頼 ────────────────────────────────────────
-    await step.run("notify-question-request", async () => {
-      await logEvent({
-        uploadId,
-        source: "inngest:notify",
-        eventType: "step.notify-question.started",
-        message: "Sending question request email",
-      });
-
-      try {
-        await sendQuestionRequestEmail({
-          to: setupResult.userEmail,
-          packageName: setupResult.packageName,
-          issueUrl: issueResult.issueUrl,
-          questionCount: analysisResult.totalQuestions,
-        });
-
-        await logEvent({
-          uploadId,
-          source: "inngest:notify",
-          eventType: "step.notify-question.success",
-          message: `Question request email sent to ${setupResult.userEmail}`,
-        });
-      } catch (err) {
-        await logError({
-          uploadId,
-          source: "inngest:notify",
-          eventType: "step.notify-question.error",
-          message: "Failed to send question request email",
-          error: err,
-        });
-        throw err;
-      }
-    });
-
-    // ── Wait for Issue Close ─────────────────────────────────
-    await logEvent({
-      uploadId,
-      source: "inngest:workflow",
-      eventType: "step.wait-issue-close.started",
-      message: `Waiting for issue #${issueResult.issueNumber} to close`,
-      metadata: { issueNumber: issueResult.issueNumber },
-    });
-
-    await step.waitForEvent("wait-for-issue-close", {
-      event: "app/issue.closed",
-      if: `async.data.issueNumber == ${issueResult.issueNumber}`,
-      timeout: "30d",
-    });
-
-    await logEvent({
-      uploadId,
-      source: "inngest:workflow",
-      eventType: "step.wait-issue-close.resumed",
-      message: `Issue #${issueResult.issueNumber} closed, resuming workflow`,
-      metadata: { issueNumber: issueResult.issueNumber },
-    });
-
-    // ── Step 4: Generate Spec ────────────────────────────────
+    // ── Step 3: Generate Spec ────────────────────────────────
     const specResult = await step.run("generate-spec", async () => {
       await logEvent({
         uploadId,
@@ -431,24 +277,6 @@ export const analyzeUpload = inngest.createFunction(
       try {
         const db = getDb();
         const analyses = JSON.parse(analysisResult.analysisJson);
-        const ghToken = process.env.GITHUB_TOKEN!;
-        const ghOwner = process.env.GITHUB_OWNER!;
-
-        // Fetch issue comments (answers)
-        let answersText = "";
-        try {
-          const comments = await getIssueComments(
-            ghToken,
-            ghOwner,
-            issueResult.repoName,
-            issueResult.issueNumber
-          );
-          if (comments.length > 0) {
-            answersText = comments.map((c) => c.body).join("\n\n");
-          }
-        } catch {
-          // Proceed without answers if fetch fails
-        }
 
         // Determine version number
         const existingVersions = await db
@@ -485,7 +313,6 @@ export const analyzeUpload = inngest.createFunction(
         const result = {
           markdown: fullMarkdown,
           versionNumber,
-          answersText,
         };
 
         await logEvent({
@@ -509,7 +336,7 @@ export const analyzeUpload = inngest.createFunction(
       }
     });
 
-    // ── Step 5: Create GitHub PR ─────────────────────────────
+    // ── Step 4: Create GitHub PR ─────────────────────────────
     const prResult = await step.run("create-pr", async () => {
       await logEvent({
         uploadId,
@@ -529,9 +356,9 @@ export const analyzeUpload = inngest.createFunction(
         await createBranch(
           ghToken,
           ghOwner,
-          issueResult.repoName,
+          analysisResult.repoName,
           branchName,
-          issueResult.defaultBranch
+          analysisResult.defaultBranch
         );
 
         // Commit spec file
@@ -539,7 +366,7 @@ export const analyzeUpload = inngest.createFunction(
         const commitResult = await commitFile(
           ghToken,
           ghOwner,
-          issueResult.repoName,
+          analysisResult.repoName,
           filePath,
           specResult.markdown,
           `docs: add spec v${specResult.versionNumber} for ${setupResult.packageName}`,
@@ -550,19 +377,19 @@ export const analyzeUpload = inngest.createFunction(
         const pr = await createPullRequest(
           ghToken,
           ghOwner,
-          issueResult.repoName,
+          analysisResult.repoName,
           `[仕様書] ${setupResult.packageName} v${specResult.versionNumber}`,
           [
             `## 仕様書ドラフト`,
             "",
             `- **パッケージ名:** ${setupResult.packageName}`,
             `- **バージョン:** v${specResult.versionNumber}`,
-            `- **関連 Issue:** #${issueResult.issueNumber}`,
             "",
-            `レビュー後、マージしてください。`,
+            `修正が必要な場合は、Files Changed からコメント、またはこの PR にコメントしてください。`,
+            `確認後、問題なければ Merge してください。`,
           ].join("\n"),
           branchName,
-          issueResult.defaultBranch
+          analysisResult.defaultBranch
         );
 
         // Save PR number
@@ -636,7 +463,7 @@ export const analyzeUpload = inngest.createFunction(
       }
     });
 
-    // ── Wait for PR Merge ────────────────────────────────────
+    // ── Wait for PR Merge (無期限) ───────────────────────────
     await logEvent({
       uploadId,
       source: "inngest:workflow",
@@ -648,7 +475,7 @@ export const analyzeUpload = inngest.createFunction(
     await step.waitForEvent("wait-for-pr-merge", {
       event: "app/pr.merged",
       if: `async.data.prNumber == ${prResult.prNumber}`,
-      timeout: "30d",
+      timeout: "365d",
     });
 
     await logEvent({
@@ -659,7 +486,7 @@ export const analyzeUpload = inngest.createFunction(
       metadata: { prNumber: prResult.prNumber },
     });
 
-    // ── Step 6: Finalize ─────────────────────────────────────
+    // ── Step 5: Finalize ─────────────────────────────────────
     await step.run("finalize", async () => {
       await logEvent({
         uploadId,
@@ -729,7 +556,7 @@ export const analyzeUpload = inngest.createFunction(
       });
 
       try {
-        const repoUrl = `https://github.com/${issueResult.repoFullName}`;
+        const repoUrl = `https://github.com/${analysisResult.repoFullName}`;
         await sendCompletionEmail({
           to: setupResult.userEmail,
           packageName: setupResult.packageName,
@@ -762,7 +589,6 @@ export const analyzeUpload = inngest.createFunction(
       message: `Workflow completed for upload ${uploadId}`,
       metadata: {
         solutionId: setupResult.solutionId,
-        issueNumber: issueResult.issueNumber,
         prNumber: prResult.prNumber,
         version: specResult.versionNumber,
       },
@@ -771,7 +597,6 @@ export const analyzeUpload = inngest.createFunction(
     return {
       uploadId,
       solutionId: setupResult.solutionId,
-      issueNumber: issueResult.issueNumber,
       prNumber: prResult.prNumber,
       version: specResult.versionNumber,
       status: "completed",
