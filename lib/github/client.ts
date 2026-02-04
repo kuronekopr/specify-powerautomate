@@ -201,3 +201,47 @@ export async function getPullRequest(
     `/repos/${owner}/${repo}/pulls/${prNumber}`
   );
 }
+
+// ── Webhook ──────────────────────────────────────────────────────
+
+export interface WebhookConfig {
+  url: string;
+  content_type: string;
+  secret?: string;
+}
+
+export interface WebhookInfo {
+  id: number;
+  config: WebhookConfig;
+}
+
+export async function listRepoWebhooks(
+  token: string,
+  owner: string,
+  repo: string
+): Promise<WebhookInfo[]> {
+  return ghFetch<WebhookInfo[]>(token, `/repos/${owner}/${repo}/hooks`);
+}
+
+export async function createRepoWebhook(
+  token: string,
+  owner: string,
+  repo: string,
+  webhookUrl: string,
+  secret: string
+): Promise<WebhookInfo> {
+  return ghFetch<WebhookInfo>(token, `/repos/${owner}/${repo}/hooks`, {
+    method: "POST",
+    body: JSON.stringify({
+      name: "web",
+      active: true,
+      events: ["issues", "pull_request"],
+      config: {
+        url: webhookUrl,
+        content_type: "json",
+        secret: secret,
+        insecure_ssl: "0",
+      },
+    }),
+  });
+}

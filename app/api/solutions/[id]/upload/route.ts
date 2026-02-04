@@ -22,37 +22,43 @@ export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
 ) {
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-
   const { id: solutionId } = await params;
   const db = getDb();
 
-  // Verify user owns this solution (shared by both phases)
-  const [solution] = await db
-    .select()
-    .from(solutions)
-    .where(
-      and(eq(solutions.id, solutionId), eq(solutions.userId, session.user.id)),
-    )
-    .limit(1);
+  // Clone request so we can read the body twice (once to peek, once for handleUpload)
+  const clonedReq = req.clone();
+  const body = (await clonedReq.json()) as HandleUploadBody;
 
-  if (!solution) {
-    return NextResponse.json(
-      { error: "ソリューションが見つかりません。" },
-      { status: 404 },
-    );
+  // onUploadCompleted is called by Vercel Blob's server (no browser session).
+  // Only enforce auth for the token-generation phase.
+  if (body.type === "blob.generate-client-token") {
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Verify user owns this solution
+    const [solution] = await db
+      .select()
+      .from(solutions)
+      .where(
+        and(eq(solutions.id, solutionId), eq(solutions.userId, session.user.id)),
+      )
+      .limit(1);
+
+    if (!solution) {
+      return NextResponse.json(
+        { error: "ソリューションが見つかりません。" },
+        { status: 404 },
+      );
+    }
   }
-
-  const body = (await req.json()) as HandleUploadBody;
 
   const jsonResponse = await handleUpload({
     body,
     request: req,
     onBeforeGenerateToken: async (_pathname) => {
-      // Authorization is already verified above.
+      const session = await auth();
       return {
         allowedContentTypes: [
           "application/zip",
@@ -60,7 +66,7 @@ export async function POST(
           "application/octet-stream",
         ],
         tokenPayload: JSON.stringify({
-          userId: session.user.id,
+          userId: session?.user?.id,
           solutionId,
         }),
       };
