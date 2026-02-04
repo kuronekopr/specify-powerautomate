@@ -20,6 +20,8 @@ import {
   commitFile,
   createPullRequest,
   getPullRequest,
+  listRepoWebhooks,
+  createRepoWebhook,
 } from "@/lib/github/client";
 import {
   sendQuestionRequestEmail,
@@ -221,6 +223,70 @@ export const analyzeUpload = inngest.createFunction(
             .update(solutions)
             .set({ githubRepoName: repoName })
             .where(eq(solutions.id, setupResult.solutionId));
+        }
+
+        // ── Ensure Webhook Exists ──
+        const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
+        if (!webhookSecret) {
+          await logEvent({
+            uploadId,
+            source: "inngest:create-issue",
+            eventType: "webhook.config.missing",
+            message: "GITHUB_WEBHOOK_SECRET not set, skipping webhook creation. Automatic workflow resumption will not work.",
+          });
+        } else {
+          // Determine Base URL
+          // VERCEL_PROJECT_PRODUCTION_URL is the reliable production domain on Vercel
+          // NEXT_PUBLIC_APP_URL is often used for custom domains
+          let baseUrl = process.env.NEXT_PUBLIC_APP_URL ||
+            (process.env.VERCEL_PROJECT_PRODUCTION_URL ? `https://${process.env.VERCEL_PROJECT_PRODUCTION_URL}` : null);
+
+          if (!baseUrl && process.env.VERCEL_URL) {
+            baseUrl = `https://${process.env.VERCEL_URL}`;
+          }
+
+          if (!baseUrl) {
+            await logEvent({
+              uploadId,
+              source: "inngest:create-issue",
+              eventType: "webhook.url.missing",
+              message: "Could not determine Base URL for Webhook. Set NEXT_PUBLIC_APP_URL.",
+            });
+          } else {
+            const webhookUrl = `${baseUrl}/api/github/webhook`;
+            try {
+              const hooks = await listRepoWebhooks(ghToken, ghOwner, repoName);
+              const exists = hooks.some(h => h.config.url === webhookUrl);
+
+              if (!exists) {
+                await createRepoWebhook(ghToken, ghOwner, repoName, webhookUrl, webhookSecret);
+                await logEvent({
+                  uploadId,
+                  source: "inngest:create-issue",
+                  eventType: "webhook.created",
+                  message: `Created webhook for ${repoName}: ${webhookUrl}`,
+                });
+              } else {
+                await logEvent({
+                  uploadId,
+                  source: "inngest:create-issue",
+                  eventType: "webhook.exists",
+                  message: `Webhook already exists for ${repoName}`,
+                });
+              }
+            } catch (err) {
+              await logError({
+                uploadId,
+                source: "inngest:create-issue",
+                eventType: "webhook.create.error",
+                message: "Failed to create/check webhook. Manual setup required.",
+                error: err,
+              });
+              // Do not throw here, as we want to proceed with Issue creation if possible,
+              // or at least not fail the whole step if just webhook fails (though workflow won't resume).
+              // Actually, if webhook fails, step 4 wont trigger automatically. But better to have the Issue created so user can see it.
+            }
+          }
         }
 
         // Build issue body from questions
