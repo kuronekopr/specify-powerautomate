@@ -72,37 +72,52 @@ export async function POST(
       };
     },
     onUploadCompleted: async ({ blob, tokenPayload }) => {
-      const payload = JSON.parse(tokenPayload ?? "{}");
-      const uid: string | undefined = payload.userId;
-      const sid: string | undefined = payload.solutionId;
+      console.log("[onUploadCompleted] Called with blob:", blob.url);
+      console.log("[onUploadCompleted] tokenPayload:", tokenPayload);
 
-      if (!uid || !sid) {
-        throw new Error("Invalid token payload");
+      try {
+        const payload = JSON.parse(tokenPayload ?? "{}");
+        const uid: string | undefined = payload.userId;
+        const sid: string | undefined = payload.solutionId;
+
+        console.log("[onUploadCompleted] Parsed payload:", { uid, sid });
+
+        if (!uid || !sid) {
+          console.error("[onUploadCompleted] Invalid token payload");
+          throw new Error("Invalid token payload");
+        }
+
+        // Create upload record
+        const [upload] = await db
+          .insert(uploads)
+          .values({
+            solutionId: sid,
+            fileUrl: blob.url,
+            status: "pending",
+          })
+          .returning();
+
+        console.log("[onUploadCompleted] Upload record created:", upload.id);
+
+        await logEvent({
+          uploadId: upload.id,
+          source: "api:upload",
+          eventType: "upload.created",
+          message: `Upload created for solution ${sid}`,
+          metadata: { solutionId: sid, fileUrl: blob.url },
+        });
+
+        // Fire Inngest event
+        await inngest.send({
+          name: "app/upload.created",
+          data: { uploadId: upload.id },
+        });
+
+        console.log("[onUploadCompleted] Inngest event sent");
+      } catch (error) {
+        console.error("[onUploadCompleted] Error:", error);
+        throw error;
       }
-
-      // Create upload record
-      const [upload] = await db
-        .insert(uploads)
-        .values({
-          solutionId: sid,
-          fileUrl: blob.url,
-          status: "pending",
-        })
-        .returning();
-
-      await logEvent({
-        uploadId: upload.id,
-        source: "api:upload",
-        eventType: "upload.created",
-        message: `Upload created for solution ${sid}`,
-        metadata: { solutionId: sid, fileUrl: blob.url },
-      });
-
-      // Fire Inngest event
-      await inngest.send({
-        name: "app/upload.created",
-        data: { uploadId: upload.id },
-      });
     },
   });
 
