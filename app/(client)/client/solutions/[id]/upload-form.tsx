@@ -3,6 +3,7 @@
 import { useState, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { upload } from "@vercel/blob/client";
+import { addTimestampToFilename } from "@/lib/blob";
 
 export default function UploadForm({ solutionId }: { solutionId: string }) {
   const router = useRouter();
@@ -32,7 +33,8 @@ export default function UploadForm({ solutionId }: { solutionId: string }) {
       // File streams directly from browser → Vercel Blob.
       // The handleUploadUrl callback route handles auth, DB record
       // creation, and Inngest event firing.
-      await upload(file.name, file, {
+      const timestampedName = addTimestampToFilename(file.name);
+      await upload(timestampedName, file, {
         access: "public",
         handleUploadUrl: `/api/solutions/${solutionId}/upload`,
       });
