@@ -232,6 +232,7 @@ export const analyzeUpload = inngest.createFunction(
             uploadId,
             source: "inngest:create-issue",
             eventType: "webhook.config.missing",
+            level: "warn",
             message: "GITHUB_WEBHOOK_SECRET not set, skipping webhook creation. Automatic workflow resumption will not work.",
           });
         } else {
@@ -250,6 +251,7 @@ export const analyzeUpload = inngest.createFunction(
               uploadId,
               source: "inngest:create-issue",
               eventType: "webhook.url.missing",
+              level: "warn",
               message: "Could not determine Base URL for Webhook. Set NEXT_PUBLIC_APP_URL.",
             });
           } else {

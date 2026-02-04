@@ -8,6 +8,7 @@ import {
   boolean,
   jsonb,
   primaryKey,
+  index,
 } from "drizzle-orm/pg-core";
 import type { AdapterAccountType } from "next-auth/adapters";
 
@@ -126,4 +127,7 @@ export const eventLogs = pgTable("event_logs", {
   message: text("message").notNull(),
   metadata: jsonb("metadata"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
-});
+}, (table) => [
+  index("idx_event_logs_upload_id").on(table.uploadId),
+  index("idx_event_logs_created_at").on(table.createdAt),
+]);
